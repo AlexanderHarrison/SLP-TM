@@ -44,12 +44,6 @@ else
 fi
 ${hmex} -q -l "MexTK/melee.link" -f "${warn} ${opt}" -s "fns" -t "fns" -o "build/slp.dat" -i slp.c
 
-# build Start.dol
-${gc_fst} read "${iso}" Start.dol build/VanillaStart.dol
-
-# build Start.dol
-${xdelta} -dfs build/VanillaStart.dol Start.dol.patch build/Start.dol
-
 # build ASM
 ${hgecko} ASM build/codes.gct
 
@@ -60,7 +54,6 @@ if [ ! -f SLP.iso ]; then cp "${iso}" SLP.iso; fi
 ${gc_fst} fs SLP.iso \
     delete MvHowto.mth \
     delete MvOmake15.mth \
-    insert Start.dol build/Start.dol \
     insert codes.gct build/codes.gct \
     insert slp.dat build/slp.dat
 

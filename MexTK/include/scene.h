@@ -121,6 +121,9 @@ struct MajorSceneDesc
     void (*cb_Exit)(void);
     void (*cb_Boot)(void);
     MinorScene *minor_scene_arr; // array of minor scenes
+
+    // fuck you in specific, mex
+    char *file_name; // m-ex specific, name of the file containing major scene code
 };
 
 struct MinorSceneDesc
@@ -129,6 +132,9 @@ struct MinorSceneDesc
     void (*cb_Think)(void);
     void (*cb_Load)(void *data);
     void (*cb_Exit)(void *data);
+
+    // fuck you in specific, mex
+    char *file_name; // m-ex specific, name of the file containing major scene code
 };
 
 struct MinorScene
