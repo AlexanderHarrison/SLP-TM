@@ -1,4 +1,4 @@
-#include "MexTK/mex.h"
+#include "../MexTK/mex.h"
 
 #ifndef HEADER_ONLINE
 #define HEADER_ONLINE

@@ -42,7 +42,7 @@ if [ "${release}" = true ]; then
 else
     opt="-DDEBUG"
 fi
-${hmex} -q -l "MexTK/melee.link" -f "${warn} ${opt}" -s "fns" -t "fns" -o "build/slp.dat" -i slp.c
+${hmex} -q -l "MexTK/melee.link" -f "${warn} ${opt}" -s "fns" -t "src/fns" -o "build/slp.dat" -i src/slp.c
 
 # build ASM
 ${hgecko} ASM build/codes.gct
@@ -58,11 +58,3 @@ ${gc_fst} fs SLP.iso \
     insert slp.dat build/slp.dat
 
 echo "built SLP.iso"
-
-# build release
-if [ "${2}" = "release" ]; then
-    ${xdelta} -fs "${iso}" -e "SLP.iso" "SLP/patch.xdelta"
-    zip -r TM-CE.zip TM-CE/
-    echo "built SLP.zip"
-fi
-
