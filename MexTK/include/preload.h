@@ -139,7 +139,7 @@ static PreloadHeapLookup *stc_preload_heaps_lookup = (void *)0x804dfb64;
 /*** Functions ***/
 void Preload_Update();                                                                                                                                               // checks for new files to preload and begins loading them synchronously
 void Preload_Invalidate();                                                                                                                                           // invalidates cache, this is usually used from scene prep on CSS's
-Preload *Preload_GetTable();                                                                                                                                         // gets preload table
+Preload *Preload_GetTable();
 PreloadEntry *Preload_CreateEntry(PreloadFileKind file_kind, char *filename, int r5, int heap_kind, int file_size, int is_init_archive, int r9, int flags, int r11); // creates a preload entry for any given file/ (file_kind is 0 for stuff like fod reflection, r5 = 4, r9 = 7) 80017740
 PreloadEntry *Preload_CreateEntryByEntrynum(int file_kind, int entrynum, int r5, int heap_kind, int file_size, int is_init_archive, int r9, int flags, int r11);     // creates a preload entry for any given file/ (file_kind is 0 for stuff like fod reflection, r5 = 4, r9 = 7) 80017740
 void Preload_RequestLoadEntry(int preload_entry_index);                                                                                                              //
