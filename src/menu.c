@@ -104,20 +104,19 @@ static void HUD_DrawText(
         *text_ptr = new_text;
         new_text->kerning = 1;
         new_text->align = align;
-        new_text->use_aspect = 1;
-        new_text->aspect.X = 80;
         new_text->viewport_scale.X = 0.1f;
         new_text->viewport_scale.Y = 0.1f;
         Text_AddSubtext(new_text, 0, 0, "");
     }
 
     Text *hud_text = *text_ptr;
-    Text_SetColor(hud_text, 4, &text_color);
+    Text_SetColor(hud_text, 0, &text_color);
 
+    hud_text->align = align;
     hud_text->hidden = false;
     f32 w = pos->x1 - pos->x0;
     f32 h = pos->y1 - pos->y0;
-    
+
     f32 x = pos->x0 * 10.f;
     x += align ? w * 5.f : 10.f;
     f32 y = pos->y0 * -10.f + h * -5.f - 25.f;
@@ -193,3 +192,58 @@ static void HUD_DrawMenuItem(Rect *pos, GXColor outline, GXColor inside) {
     GFX_AddVtx(mr_x, mr_y, 0, outline); // mid left
     GFX_AddVtx(tr_x, tr_y, 0, outline); // top left
 }
+
+// MENU ----------------------------------------------------------------------
+
+static const GXColor menu_colour_default_outline = {230, 230, 230, 255};
+static const GXColor menu_colour_default_inside = {50, 50, 50, 200};
+static const GXColor menu_colour_default_text = {230, 230, 230, 255};
+static const GXColor menu_colour_default_subtext = {190, 190, 190, 255};
+static const GXColor menu_colour_enabled_outline = {80, 255, 70, 255};
+static const GXColor menu_colour_enabled_inside = {50, 70, 50, 200};
+
+typedef struct MenuItem {
+    const char *name;
+    void (*Click)(struct MenuItem *self);
+    int state;
+    GXColor inside_color;
+    GXColor outline_color;
+    GXColor text_color;
+} MenuItem;
+
+typedef struct Menu {
+    s32 item_count;
+    MenuItem *items;
+} Menu;
+
+static Rect MenuRect(f32 x, f32 y) {
+    return (Rect) {
+        x - 10.f, y - 1.5f,
+        x + 10.f, y + 1.5f,
+    };
+}
+
+static void MenuItem_Off(MenuItem *item) {
+    item->inside_color = (GXColor) {0};
+    item->outline_color = (GXColor) {0};
+    item->text_color = (GXColor) {0};
+    item->state = false;
+}
+
+static void MenuItem_On(MenuItem *item) {
+    item->outline_color = menu_colour_enabled_outline;
+    item->inside_color = menu_colour_enabled_inside;
+    item->text_color = (GXColor) {0};
+    item->state = true;
+}
+
+static bool MenuItem_Toggle(MenuItem *item) {
+    if (item->state) {
+        MenuItem_Off(item);
+        return false;
+    } else {
+        MenuItem_On(item);
+        return true;
+    }
+}
+

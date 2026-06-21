@@ -19,6 +19,7 @@ int strlen(const char *s);
 void memcpy(void *dest, const void *source, int size);
 void memmove(void *dest, const void *source, int size);
 void memset(void *dest, int c, int size);
+int memcmp(const void *a, const void *b, size_t size);
 int sprintf(char *restrict str, const char *restrict format, ...);
 
 // OS Macros
