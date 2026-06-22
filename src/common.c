@@ -72,23 +72,32 @@ static inline void GFX_AddVtx(f32 x, f32 y, f32 z, GXColor color) {
 
 // HUD ---------------------------------------------------------------
 
-#define GXLINK_HUD 12
-#define GXLINK_HUD_CANVAS 18
+
+// gxlink:
+// 0 in-game
+// 3 4 5 6 7 in-game on top
+// 8 10 hud no xlu
+// 9 14 16 weird
+// 11 hud xlu
+// 12 hud disable on pause 
+// 15 hud xlu on top
+// 17 double weird
+#define GXLINK_HUD 15
+
 static GOBJ *hud_gobj;
 static int hud_canvas;
 
 static Text *hud_text_cache[64];
 static u32 hud_text_cache_used;
-static void HUD_TextCacheReset(void) { hud_text_cache_used = 0; }
+static void HUD_TextCacheReset(void) {
+    for (u32 i = 0; i < hud_text_cache_used; ++i)
+        hud_text_cache[i]->hidden = true;
+    hud_text_cache_used = 0;
+}
 
 static void HUD_Init(void) {
-    hud_gobj = GObj_Create(19, 20, 0);
-    COBJDesc ***dmgScnMdls = Archive_GetPublicAddress(*stc_ifall_archive, (void *)0x803f94d0);
-    COBJDesc *cam_desc = dmgScnMdls[1][0];
-    COBJ *hud_cobj = COBJ_LoadDesc(cam_desc);
-    GObj_AddObject(hud_gobj, R13_U8(-0x3E55), hud_cobj);
-    GOBJ_InitCamera(hud_gobj, CObjThink_Common, 7);
-    hud_gobj->cobj_links = 1 << GXLINK_HUD;
+    hud_gobj = GObj_Create(0, 0, 0);
+    hud_canvas = Text_CreateCanvas(2, 0, 0, 0, 0, GXLINK_HUD, 20, 0);
 }
 
 static COBJ *hud_camera_backup;
@@ -209,7 +218,7 @@ static void HUD_DrawMenuItem(Rect *pos, GXColor outline, GXColor inside) {
 
     GFX_AddVtx(ml_x, ml_y, 0, outline); // mid left
     GFX_AddVtx(tl_x, tl_y, 0, outline); // top left
-    
+
     // since lines end parallel to the nearest horizontal/vertical,
     // we need to drop down the horizontal lines to hide the gap
     GFX_AddVtx(tl_x, tl_y-t, 0, outline); // top left
@@ -227,7 +236,7 @@ static void HUD_DrawMenuItem(Rect *pos, GXColor outline, GXColor inside) {
 // MENU ----------------------------------------------------------------------
 
 static const GXColor menu_colour_default_outline = {230, 230, 230, 255};
-static const GXColor menu_colour_default_inside = {50, 50, 50, 200};
+static const GXColor menu_colour_default_inside = {0, 0, 0, 180};
 static const GXColor menu_colour_default_text = {230, 230, 230, 255};
 static const GXColor menu_colour_default_subtext = {190, 190, 190, 255};
 static const GXColor menu_colour_enabled_outline = {80, 255, 70, 255};
@@ -245,6 +254,11 @@ typedef struct MenuItem {
 typedef struct Menu {
     s32 item_count;
     MenuItem *items;
+    void (*Think)(struct Menu *self);
+    void (*GX)(struct Menu *self);
+    s32 selected_idx_cur;
+    s32 selected_idx_prev;
+    Anim scroll;
 } Menu;
 
 static Rect MenuRect(f32 x, f32 y) {
@@ -278,3 +292,54 @@ static bool MenuItem_Toggle(MenuItem *item) {
     }
 }
 
+// TEXT INPUT -----------------------------------------------------
+
+static const char text_input_map_l[24] =
+    "DERTGF" // top right
+    "DCVBGF" // bottom right
+    "DEWQAS" // top left
+    "DCXZAS" // bottom left
+;
+
+static const char text_input_map_r[24] =
+    "KIOP#L" // top right
+    "K012#L" // bottom right
+    "KIUYHJ" // top left
+    "K0MNHJ" // bottom left
+;
+
+static const u32 text_input_quad_row[10] = {
+   // octal :)
+   01122222233,
+   01122222333,
+   01122223333,
+   01122233333,
+   01555553333,
+   01555555333,
+   01555555533,
+   00055555554,
+   00055555554,
+   00055555554,
+};
+
+static u32 TextInput_CoordIdx(s8 x, s8 y) {
+    // fold quadrants
+    u32 idx = 0;
+    if (x < 0) { x = -x; idx += 12; }
+    if (y < 0) { y = -y; idx += 6; }
+
+    // group by 8 units and find row
+    u32 row = text_input_quad_row[(79-y) / 8];
+
+    // group by 8 units and bit manip to extract octal
+    idx += (row >> ((79 - x) / 8)*3) & 0b111;
+    return idx;
+}
+
+static char TextInput_LStickChar(s8 x, s8 y) {
+    return text_input_map_l[TextInput_CoordIdx(x, y)];
+}
+
+static char TextInput_CStickChar(s8 x, s8 y) {
+    return text_input_map_r[TextInput_CoordIdx(x, y)];
+}

@@ -2,12 +2,8 @@
 #include <stddef.h>
 #include "slp.h"
 #include "common.c"
-#include "menu.c"
 
-enum {
-    ST_Init,
-    ST_Searching,
-} state;
+void bp(void);
 
 // static data doesn't work for some reason, need to allocate these
 static MatchStateResponseBuffer *msrb;
@@ -24,31 +20,115 @@ enum {
 };
 static u8 exit_mode;
 
-void bp(void);
+// ANIMATIONS ----------------------------------------------------------------
 
-/*
-main.asm:
-  on enter CSS:
-    run MajorSceneLoad function (callback from Scene_ProcessMajor 801a4418)
-    run CSSScenePrep function (callback from Scene_ProcessMinor 801a40b0)
-  after connection:
-    run CSSSceneDecide
-    run SplashSceneInit
-    run SplashScenePrep
-  after splash scene runs:
-    run SplashSceneDecide
-
-  game happens (immediate exit from testing due to breakpoints causing timeout (?))
-    run SinglesDetermineWinner
-    run VSSceneDecide
-    run CheckIfWonLastGame from VSSceneDecide_UpdateWinner 
-*/
+static const f32 selection_change_t = 4.f;
+static const f32 selection_change_fast_t = 2.f;
+static const f32 selection_change_r_t = 1.f/selection_change_t;
+static const f32 selection_change_fast_r_t = 1.f/selection_change_fast_t;
 
 static Anim queue_indicator_pop = {
     -20, -20,
     3, 0,
     -20, 0
 };
+
+static Anim menu_pop = {
+    -50, -50,
+    3.f, 0,
+    -50, -22
+};
+
+static Anim menu_pop_scroll = {
+    -20, -20,
+    2.1f, 0,
+    -20, 0
+};
+
+static Anim menu_selected_item_prev = {
+    0, 0,
+    selection_change_r_t, 0,
+    0, 1,
+};
+static Anim menu_selected_item_cur = {
+    1, 1,
+    selection_change_r_t, 0,
+    0, 1,
+};
+
+// MENU PROTOTYPES ----------------------------------------------------------------
+
+static void Click_Exit(MenuItem *item);
+static void Click_QueueRanked(MenuItem *item);
+static void Click_QueueUnranked(MenuItem *item);
+static void Click_QueueDirect(MenuItem *item);
+static void Click_QueueTeams(MenuItem *item);
+static void Click_QueueParty(MenuItem *item);
+
+static void Menu_Think(Menu *menu);
+static void Menu_GX(Menu *menu);
+static void TextInput_Think(Menu *menu);
+static void TextInput_GX(Menu *menu);
+
+// MENUS ----------------------------------------------------------------
+
+enum {
+    TEST_MENU_QUEUE_RANKED,
+    TEST_MENU_QUEUE_UNRANKED,
+    TEST_MENU_QUEUE_DIRECT,
+    TEST_MENU_QUEUE_TEAMS,
+    TEST_MENU_QUEUE_PARTY,
+    TEST_MENU_EXIT,
+};
+
+static MenuItem test_menu_items[] = {
+    {
+        .name = "Queue Ranked",
+        .Click = Click_QueueRanked,
+    },
+    {
+        .name = "Queue Unranked",
+        .Click = Click_QueueUnranked,
+    },
+    {
+        .name = "Queue Direct",
+        .Click = Click_QueueDirect,
+    },
+    {
+        .name = "Queue Teams",
+        .Click = Click_QueueTeams,
+    },
+    {
+        .name = "Queue Party",
+        .Click = Click_QueueParty,
+    },
+    {
+        .name = "Exit",
+        .Click = Click_Exit,
+    },
+};
+static Menu test_menu = {
+    .item_count = countof(test_menu_items),
+    .items = test_menu_items,
+    .Think = Menu_Think,
+    .GX = Menu_GX,
+};
+
+// todo can I remove most of this?
+static char connect_code_buf[18];
+static u32 connect_code_buf_len;
+static MenuItem *connect_code_text_input_menu_item;
+static u8 connect_code_text_input_online_mode;
+
+static Menu connect_code_text_input_menu = {
+    .Think = TextInput_Think,
+    .GX = TextInput_GX,
+};
+
+static Menu *menu_stack[32] = { &test_menu };
+static int menu_depth;
+
+// MENU CALLBACKS ----------------------------------------------------------------
 
 static void Click_Exit(MenuItem *item) {
     exit_mode = EXIT_CSS;
@@ -61,6 +141,12 @@ static void SlpEXIByteCmd(u8 cmd) {
 }
 
 static void Queue_Stop(void) {
+    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_RANKED]);
+    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_UNRANKED]);
+    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_DIRECT]);
+    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_TEAMS]);
+    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_PARTY]);
+
     if (queue_timer) {
         queue_timer = 0;
         SlpEXIByteCmd(SlippiCmdCleanupConnections);
@@ -86,61 +172,23 @@ static void Click_Queue(MenuItem *item, u8 online_mode) {
 
 static void Click_QueueRanked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_RANKED); }
 static void Click_QueueUnranked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_UNRANKED); }
+static void Click_QueueDirect(MenuItem *item) {
+    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
+    connect_code_text_input_menu_item = item;
+    connect_code_text_input_online_mode = ONLINE_MODE_DIRECT;
+}
+static void Click_QueueTeams(MenuItem *item) {
+    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
+    connect_code_text_input_menu_item = item;
+    connect_code_text_input_online_mode = ONLINE_MODE_TEAMS;
+}
+static void Click_QueueParty(MenuItem *item) {
+    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
+    connect_code_text_input_menu_item = item;
+    connect_code_text_input_online_mode = ONLINE_MODE_PARTY;
+}
 
-enum {
-    TEST_MENU_QUEUE_RANKED,
-    TEST_MENU_QUEUE_UNRANKED,
-    TEST_MENU_EXIT,
-};
-
-static MenuItem test_menu_items[] = {
-    {
-        .name = "Queue Ranked",
-        .Click = Click_QueueRanked,
-    },
-    {
-        .name = "Queue Unranked",
-        .Click = Click_QueueUnranked,
-    },
-    {
-        .name = "Exit",
-        .Click = Click_Exit,
-    },
-};
-static Menu test_menu = { countof(test_menu_items), test_menu_items };
-
-static s32 menu_selection_cur;
-static s32 menu_selection_prev;
-
-static Anim menu_pop = {
-    -50, -50,
-    3.f, 0,
-    -50, -22
-};
-
-static Anim menu_pop_scroll = {
-    -20, -20,
-    2.1f, 0,
-    -20, 0
-};
-
-static const f32 selection_change_t = 4.f;
-static const f32 selection_change_fast_t = 2.f;
-static const f32 selection_change_r_t = 1.f/selection_change_t;
-static const f32 selection_change_fast_r_t = 1.f/selection_change_fast_t;
-
-static Anim menu_selected_item_prev = {
-    0, 0,
-    selection_change_r_t, 0,
-    0, 1,
-};
-static Anim menu_selected_item_cur = {
-    1, 1,
-    selection_change_r_t, 0,
-    0, 1,
-};
-
-static Anim menu_scroll = { 0 }; // adjusted at runtime
+// GX ----------------------------------------------------------------
 
 typedef struct QueueIndicatorInfo {
     const char *text;
@@ -215,24 +263,25 @@ static void Queue_GX(void) {
     HUD_DrawText(s, &menu_rect, 0.4f, queue_indicator_timer_text_color, false);
 }
 
-static void Menu_GX(void) {
+static void Menu_GX(Menu *menu) {
     f32 menu_x = 10;
     f32 menu_y = menu_pop.cur;
-    s32 i = test_menu.item_count - 1;
-    f32 t = menu_scroll.cur + menu_pop_scroll.cur - ((f32)i - 4.f);
+    s32 i = menu->item_count - 1;
+    f32 t = menu->scroll.cur + menu_pop_scroll.cur - ((f32)i - 4.f);
     while (i >= 0) {
-        MenuItem *item = &test_menu.items[i];
+        MenuItem *item = &menu->items[i];
         
         static const f32 y_scale = 3.5f;
         static const f32 selected_x_increase = -4.f;
         static const f32 selected_y_increase = 1.5f;
 
         // f32 item_x = t*t * 0.15f;
-        f32 item_x = t*t * 0.15f - t*t*t/120.f;
+        // f32 item_x = t*t * 0.15f - t*t*t/120.f;
+        f32 item_x = 7.f;
         f32 item_y = y_scale*t;
         Rect menu_rect = MenuRect(menu_x + item_x, menu_y + item_y);
 
-        if (i == menu_selection_cur) {
+        if (i == menu->selected_idx_cur) {
             f32 cur = menu_selected_item_cur.cur;
             f32 dy = cur * selected_y_increase;
             f32 dx = cur * selected_x_increase;
@@ -241,7 +290,7 @@ static void Menu_GX(void) {
             menu_rect.x1 += dx;
             t += dy / y_scale;
         }
-        if (i == menu_selection_prev) {
+        if (i == menu->selected_idx_prev) {
             f32 cur = menu_selected_item_prev.cur;
             f32 dy = cur * selected_y_increase;
             f32 dx = cur * selected_x_increase;
@@ -266,16 +315,84 @@ static void Menu_GX(void) {
     }
 }
 
-static void TM_GX(GOBJ *gobj, int pass) {
-    HUD_StartGX();
+static void TextInput_DrawSide(f32 x, f32 y, char chars[15], char selected_char) {
+    GXColor outline = {255, 255, 255, 255};
+    GXColor outline_selected = {255, 100, 100, 255};
+    GXColor inside = {0, 0, 0, 255};
 
-    Menu_GX();
-    Queue_GX();
+    static const f32 square_size = 3;
+    static const f32 square_pad = 0.2f;
 
-    HUD_EndGX();
+    for (int y_i = 0; y_i < 3; ++y_i) {
+        for (int x_i = 0; x_i < 5; ++x_i) {
+            Rect r = { x, y, x + square_size, y + square_size };
+            char c = chars[y_i*5 + x_i];
+
+            GXColor o = c == selected_char ? outline_selected : outline;
+            HUD_DrawMenuItem(&r, o, inside);
+
+            char text[2] = {c, 0};
+            HUD_DrawText(text, &r, 0.5f, o, false);
+            x += square_size + square_pad;
+        }
+
+        y -= square_size + square_pad;
+        x -= (square_size + square_pad) * 5.f;
+    }
 }
 
-static void TM_Think(GOBJ *_) {
+static void TextInput_GX(Menu *_) {
+    HSD_Pad *pad = PadGetMaster(1); // TODO: ply
+    char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
+    char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
+    TextInput_DrawSide(-10, 8, "QWERTASDFGZXCVB", lstick_char);
+    TextInput_DrawSide(8, 8, "YUIOPHJKL.NM012", cstick_char);
+
+    Rect r = { -10, 10, 10, 15 };
+    HUD_DrawText(connect_code_buf, &r, 0.5f, menu_colour_default_text, false);
+}
+
+static void TM_GX(GOBJ *gobj, int pass) {
+    if (pass == 1) {
+        HUD_StartGX();
+        
+        Menu *menu = menu_stack[menu_depth];
+        menu->GX(menu);
+
+        Queue_GX();
+    
+        HUD_EndGX();
+    }
+}
+
+// THINK ----------------------------------------------------------------------------------------
+
+static void TextInput_Think(Menu *menu) {
+    HSD_Pad *pad = PadGetMaster(1); // TODO: ply
+    char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
+    char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
+
+    // TODO: count light press (but don't double count lol)
+
+    if (connect_code_buf_len+1 < countof(connect_code_buf)) {
+        if (pad->down & PAD_TRIGGER_L) connect_code_buf[connect_code_buf_len++] = lstick_char;
+        else if (pad->down & PAD_TRIGGER_R) connect_code_buf[connect_code_buf_len++] = cstick_char;
+    }
+
+    if (connect_code_buf_len && (pad->down & PAD_TRIGGER_Z))
+        connect_code_buf[--connect_code_buf_len] = 0;
+    
+    if (pad->down & PAD_BUTTON_START) {
+        memcpy(fmtb->opp_connect_code, connect_code_buf, sizeof(connect_code_buf));
+        Click_Queue(connect_code_text_input_menu_item, connect_code_text_input_online_mode);
+        menu_depth--;
+    }
+    else if (pad->down & PAD_BUTTON_B) {
+        menu_depth--;
+    }
+}
+
+static void Menu_Think(Menu *menu) {
     int combined_pad_down = 0; 
     int combined_pad_held = 0; 
     for (int i = 0; i < 4; ++i) {
@@ -284,8 +401,6 @@ static void TM_Think(GOBJ *_) {
         combined_pad_held |= pad->held;
     }
 
-    // PAUSE ------------------------------------------------------------------------
-    
     if (combined_pad_down & PAD_BUTTON_START) {
         if (paused) {
             paused = false;
@@ -302,18 +417,16 @@ static void TM_Think(GOBJ *_) {
             Anim_Start(&menu_pop_scroll);
         }
     }
-
-    // MENU ------------------------------------------------------------------------
     
     if (paused) {
         bool selection_changed = false;
-
+    
         static int repeat_timer = 0;
         static const int repeat_time_slow = 30;
         static const int repeat_time_fast = 2;
         static const int repeat_continue_time_slow = 24;
         static const int repeat_continue_time_fast = 0;
-
+    
         if ((combined_pad_held & (PAD_BUTTON_UP | PAD_BUTTON_DOWN)) == 0)
             repeat_timer = 0;
         else
@@ -322,30 +435,30 @@ static void TM_Think(GOBJ *_) {
         bool fast = combined_pad_held & PAD_TRIGGER_R;
         int repeat_time = fast ? repeat_time_fast : repeat_time_slow;
         int repeat_continue_time = fast ? repeat_continue_time_fast : repeat_continue_time_slow;
-        menu_scroll.speed = fast ? selection_change_fast_r_t : selection_change_r_t;
-
+        menu->scroll.speed = fast ? selection_change_fast_r_t : selection_change_r_t;
+    
         bool repeat_input = false;
         if (repeat_timer >= repeat_time) {
             repeat_timer = repeat_continue_time;
             repeat_input = true;
         }
-
+    
         int pad_scroll = repeat_input ? combined_pad_held : combined_pad_down;
-
-        if ((pad_scroll & PAD_BUTTON_UP) && menu_selection_cur > 0) {
+    
+        if ((pad_scroll & PAD_BUTTON_UP) && menu->selected_idx_cur > 0) {
             selection_changed = true;
-            menu_scroll.target -= 1.f;
-            menu_selection_prev = menu_selection_cur;
-            menu_selection_cur -= 1;
+            menu->scroll.target -= 1.f;
+            menu->selected_idx_prev = menu->selected_idx_cur;
+            menu->selected_idx_cur -= 1;
         }
-
-        if ((pad_scroll & PAD_BUTTON_DOWN) && menu_selection_cur+1 < test_menu.item_count) {
+    
+        if ((pad_scroll & PAD_BUTTON_DOWN) && menu->selected_idx_cur+1 < test_menu.item_count) {
             selection_changed = true;
-            menu_scroll.target += 1.f;
-            menu_selection_prev = menu_selection_cur;
-            menu_selection_cur += 1;
+            menu->scroll.target += 1.f;
+            menu->selected_idx_prev = menu->selected_idx_cur;
+            menu->selected_idx_cur += 1;
         }
-
+    
         // static u32 sfx_i= 0;
         // static int sfx[] = {
         //     183,287,490
@@ -357,18 +470,18 @@ static void TM_Think(GOBJ *_) {
             if (sfx_i == countof(sfx)) sfx_i = 0;
             OSReport("%i\n", sfx[sfx_i]);
         }*/
-        
+    
         if (selection_changed) {
             SFX_PlayRaw(287, 100, 128, 2, 0);
             // SFX_Play(sfx[sfx_i]);
             menu_selected_item_prev = menu_selected_item_cur;
             Anim_StartRev(&menu_selected_item_prev);
-
+    
             menu_selected_item_cur.cur = menu_selected_item_cur.start;
             Anim_Start(&menu_selected_item_cur);
         }
         
-        MenuItem *selected_item = &test_menu.items[menu_selection_cur];
+        MenuItem *selected_item = &menu->items[menu->selected_idx_cur];
         if (combined_pad_down & PAD_BUTTON_A) {
             // static int i = 340;
             // 105 148 157 183 230 243 249 287 297 347-9 398 418 451 459 490
@@ -377,7 +490,12 @@ static void TM_Think(GOBJ *_) {
             selected_item->Click(selected_item);
         }
     }
-    
+}
+
+static void TM_Think(GOBJ *_) {
+    Menu *menu = menu_stack[menu_depth];
+    menu->Think(menu);
+
     // QUEUE ------------------------------------------------------------------------
     
     if (queue_timer) {
@@ -396,11 +514,13 @@ static void TM_Think(GOBJ *_) {
     
     Anim_Update(&menu_pop);
     Anim_Update(&menu_pop_scroll);
-    Anim_Update(&menu_scroll);
+    Anim_Update(&test_menu.scroll);
     Anim_Update(&menu_selected_item_prev);
     Anim_Update(&menu_selected_item_cur);
     Anim_Update(&queue_indicator_pop);
 }
+
+// INIT ----------------------------------------------------------------------------------------
 
 static void TM_Init(void) {
     // REMOVE VANILLA STUFF -----------------------------------------------
@@ -420,29 +540,9 @@ static void TM_Init(void) {
     stc_hsd_update->onFrame = NULL;
 
     // SETUP HUD -----------------------------------------------
-    
-    // void (*hud)(int mode) = (void*)0x802f665c;
-    // hud(4);
-    // for (int i = 0; i < 4; ++i)
-    // Match_CreateHUD(0);
-    // Match_ShowHUD();
-    // Match_ShowPercents();
-    // Match_ShowTimer();
-    // *stc_hud_is_hidden = false;
-    // Match_CreateHUD(0);
 
     HUD_Init();
-    GObj_AddGXLink(hud_gobj, TM_GX, GXLINK_HUD, 20); // TODO: causing some issue with showing percents hud
-
-    // When I put this in HUD_Init it doesn't work (???????)
-    GOBJ *test = GObj_Create(19, 20, 0);
-    COBJDesc ***dmgScnMdls = Archive_GetPublicAddress(*stc_ifall_archive, (void *)0x803f94d0);
-    COBJDesc *cam_desc = dmgScnMdls[1][0];
-    COBJ *test_cobj = COBJ_LoadDesc(cam_desc);
-    GObj_AddObject(test, R13_U8(-0x3E55), test_cobj);
-    GOBJ_InitCamera(test, CObjThink_Common, 7);
-    test->cobj_links = 1 << 18;
-    hud_canvas = Text_CreateCanvas(2, test, 14, 15, 0, 18, 81, 19);
+    GObj_AddGXLink(hud_gobj, TM_GX, GXLINK_HUD, 20);
 
     // SETUP SLIPPI BUFFERS -----------------------------------------------
 
@@ -531,10 +631,12 @@ void OnSceneChange(void) {
         TM_Init();
     }
 
-    // #ifdef DEBUG
-    //     if (major == MJRKIND_MNMA) {
-    //         OverrideSceneDecide(OnMenu);
-    //         Scene_ExitMinor();
-    //     }
-    // #endif
+    #ifdef DEBUG
+        stc_memcard->EventBackup.c_kind = CKIND_PEACH;
+        stc_memcard->EventBackup.costume = 3;
+        if (major == MJRKIND_MNMA) {
+            OverrideSceneDecide(OnMenu);
+            Scene_ExitMinor();
+        }
+    #endif
 }
