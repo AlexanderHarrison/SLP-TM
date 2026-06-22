@@ -141,22 +141,23 @@ static void SlpEXIByteCmd(u8 cmd) {
 }
 
 static void Queue_Stop(void) {
-    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_RANKED]);
-    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_UNRANKED]);
-    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_DIRECT]);
-    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_TEAMS]);
-    MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_PARTY]);
-
     if (queue_timer) {
+        MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_RANKED]);
+        MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_UNRANKED]);
+        MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_DIRECT]);
+        MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_TEAMS]);
+        MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_PARTY]);
+
         queue_timer = 0;
         SlpEXIByteCmd(SlippiCmdCleanupConnections);
     }
 }
 
 static void Click_Queue(MenuItem *item, u8 online_mode) {
-    Queue_Stop();
+    if (!item->state) {
+        Queue_Stop();
+        MenuItem_On(item);
 
-    if (MenuItem_Toggle(item)) {
         Anim_Start(&queue_indicator_pop);
         queue_timer = 1;
         pstb->online_mode = online_mode;
@@ -166,27 +167,30 @@ static void Click_Queue(MenuItem *item, u8 online_mode) {
         SlpEXITransferBuffer(pstb, sizeof(*pstb), SlpExiWrite);
         SlpEXITransferBuffer(fmtb, sizeof(*fmtb), SlpExiWrite);
     } else {
+        Queue_Stop();
+        MenuItem_Off(item);
+        Anim_StartRev(&queue_indicator_pop);
+    }
+}
+
+static void Click_QueueConnectCode(MenuItem *item, u8 online_mode) {
+    if (!item->state) {
+        Queue_Stop();
+        menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
+        connect_code_text_input_menu_item = item;
+        connect_code_text_input_online_mode = online_mode;
+    } else {
+        Queue_Stop();
+        MenuItem_Off(item);
         Anim_StartRev(&queue_indicator_pop);
     }
 }
 
 static void Click_QueueRanked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_RANKED); }
 static void Click_QueueUnranked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_UNRANKED); }
-static void Click_QueueDirect(MenuItem *item) {
-    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
-    connect_code_text_input_menu_item = item;
-    connect_code_text_input_online_mode = ONLINE_MODE_DIRECT;
-}
-static void Click_QueueTeams(MenuItem *item) {
-    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
-    connect_code_text_input_menu_item = item;
-    connect_code_text_input_online_mode = ONLINE_MODE_TEAMS;
-}
-static void Click_QueueParty(MenuItem *item) {
-    menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
-    connect_code_text_input_menu_item = item;
-    connect_code_text_input_online_mode = ONLINE_MODE_PARTY;
-}
+static void Click_QueueDirect(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_DIRECT); }
+static void Click_QueueTeams(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_TEAMS); }
+static void Click_QueueParty(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_PARTY); }
 
 // GX ----------------------------------------------------------------
 
@@ -330,9 +334,16 @@ static void TextInput_DrawSide(f32 x, f32 y, char chars[15], char selected_char)
 
             GXColor o = c == selected_char ? outline_selected : outline;
             HUD_DrawMenuItem(&r, o, inside);
-
-            char text[2] = {c, 0};
-            HUD_DrawText(text, &r, 0.5f, o, false);
+            
+            char text[4] = { 0 };
+            if (c != '#') {
+                text[0] = c;
+            } else {
+                // idk why the halfwidth hashtag doesn't work
+                text[0] = 0x81;
+                text[1] = 0x94;
+            }
+            HUD_DrawText(text, &r, 0.5f, o, true);
             x += square_size + square_pad;
         }
 
@@ -346,10 +357,24 @@ static void TextInput_GX(Menu *_) {
     char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
     char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
     TextInput_DrawSide(-10, 8, "QWERTASDFGZXCVB", lstick_char);
-    TextInput_DrawSide(8, 8, "YUIOPHJKL.NM012", cstick_char);
-
+    TextInput_DrawSide(8, 8, "YUIOPHJKL#NM012", cstick_char);
+    
+    // stupid shift jis not having halfwidth # for some reason
+    char connect_code_buf_converted[countof(connect_code_buf)*2];
+    u32 connect_code_buf_converted_len = 0;
+    for (u32 i = 0; i < connect_code_buf_len; ++i) {
+        char c = connect_code_buf[i];
+        if (c != '#') {
+            connect_code_buf_converted[connect_code_buf_converted_len++] = c;
+        } else {
+            connect_code_buf_converted[connect_code_buf_converted_len++] = 0x81;
+            connect_code_buf_converted[connect_code_buf_converted_len++] = 0x94;
+        }
+    } 
+    connect_code_buf_converted[connect_code_buf_converted_len++] = 0;
+    
     Rect r = { -10, 10, 10, 15 };
-    HUD_DrawText(connect_code_buf, &r, 0.5f, menu_colour_default_text, false);
+    HUD_DrawText(connect_code_buf_converted, &r, 0.5f, menu_colour_default_text, false);
 }
 
 static void TM_GX(GOBJ *gobj, int pass) {
