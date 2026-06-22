@@ -42,7 +42,7 @@ if [ "${release}" = true ]; then
 else
     opt="-DDEBUG"
 fi
-${hmex} -q -l "MexTK/melee.link" -f "${warn} ${opt}" -s "fns" -t "src/fns" -o "build/slp.dat" -i src/slp.c
+${hmex} -q -l "MexTK/melee.link" -f "${warn} ${opt}" -s "fns" -t "src/fns" -o "build/slp.dat" -i src/tm.c
 
 # build ASM
 ${hgecko} ASM build/codes.gct
