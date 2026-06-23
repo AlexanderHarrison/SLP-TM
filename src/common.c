@@ -294,11 +294,22 @@ static bool MenuItem_Toggle(MenuItem *item) {
 
 // TEXT INPUT -----------------------------------------------------
 
+static char text_input_chars_l[15] = "QWERTASDFGZXCVB";
+static char text_input_chars_l_alt[15] = "1234567890";
+static char text_input_chars_r[15] = "YUIOPHJKL#NM012";
+
 static const char text_input_map_l[24] =
     "DERTGF" // top right
     "DCVBGF" // bottom right
     "DEWQAS" // top left
     "DCXZAS" // bottom left
+;
+
+static const char text_input_map_l_alt[24] =
+    "834509" // top right
+    "8   09" // bottom right
+    "832167" // top left
+    "8   67" // bottom left
 ;
 
 static const char text_input_map_r[24] =
@@ -314,9 +325,9 @@ static const u32 text_input_quad_row[10] = {
    01222222333,
    01222223333,
    01222233333,
-   01555553333,
+   01222233333,
+   01222233333,
    01555555333,
-   01555555533,
    00055555554,
    00055555554,
    00055555554,
@@ -335,9 +346,12 @@ static u32 TextInput_CoordIdx(s8 x, s8 y) {
     idx += (row >> ((79 - x) / 8)*3) & 0b111;
     return idx;
 }
-
 static char TextInput_LStickChar(s8 x, s8 y) {
     return text_input_map_l[TextInput_CoordIdx(x, y)];
+}
+
+static char TextInput_LStickChar_Alt(s8 x, s8 y) {
+    return text_input_map_l_alt[TextInput_CoordIdx(x, y)];
 }
 
 static char TextInput_CStickChar(s8 x, s8 y) {

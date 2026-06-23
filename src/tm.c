@@ -112,6 +112,8 @@ static Menu test_menu = {
     .items = test_menu_items,
     .Think = Menu_Think,
     .GX = Menu_GX,
+    .selected_idx_cur = TEST_MENU_QUEUE_UNRANKED,
+    .selected_idx_prev = TEST_MENU_QUEUE_UNRANKED,
 };
 
 // todo can I remove most of this?
@@ -142,6 +144,7 @@ static void SlpEXIByteCmd(u8 cmd) {
 
 static void Queue_Stop(void) {
     if (queue_timer) {
+        Anim_StartRev(&queue_indicator_pop);
         MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_RANKED]);
         MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_UNRANKED]);
         MenuItem_Off(&test_menu_items[TEST_MENU_QUEUE_DIRECT]);
@@ -169,7 +172,6 @@ static void Click_Queue(MenuItem *item, u8 online_mode) {
     } else {
         Queue_Stop();
         MenuItem_Off(item);
-        Anim_StartRev(&queue_indicator_pop);
     }
 }
 
@@ -182,7 +184,6 @@ static void Click_QueueConnectCode(MenuItem *item, u8 online_mode) {
     } else {
         Queue_Stop();
         MenuItem_Off(item);
-        Anim_StartRev(&queue_indicator_pop);
     }
 }
 
@@ -271,7 +272,7 @@ static void Menu_GX(Menu *menu) {
     f32 menu_x = 10;
     f32 menu_y = menu_pop.cur;
     s32 i = menu->item_count - 1;
-    f32 t = menu->scroll.cur + menu_pop_scroll.cur - ((f32)i - 4.f);
+    f32 t = menu->scroll.cur + menu_pop_scroll.cur - ((f32)i - 6.f);
     while (i >= 0) {
         MenuItem *item = &menu->items[i];
         
@@ -353,12 +354,20 @@ static void TextInput_DrawSide(f32 x, f32 y, char chars[15], char selected_char)
 }
 
 static void TextInput_GX(Menu *_) {
-    HSD_Pad *pad = PadGetMaster(1); // TODO: ply
-    char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
+    HSD_Pad *pad = PadGetMaster(0); // TODO: ply
+    bool alt = pad->held & PAD_BUTTON_Y;
+
+    if (alt) {
+        char lstick_char = TextInput_LStickChar_Alt(pad->stickX, pad->stickY);
+        TextInput_DrawSide(-20, 8, text_input_chars_l_alt, lstick_char);
+    } else {
+        char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
+        TextInput_DrawSide(-20, 8, text_input_chars_l, lstick_char);
+    }
+
     char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
-    TextInput_DrawSide(-10, 8, "QWERTASDFGZXCVB", lstick_char);
-    TextInput_DrawSide(8, 8, "YUIOPHJKL#NM012", cstick_char);
-    
+    TextInput_DrawSide(-2, 8, text_input_chars_r, cstick_char);
+
     // stupid shift jis not having halfwidth # for some reason
     char connect_code_buf_converted[countof(connect_code_buf)*2];
     u32 connect_code_buf_converted_len = 0;
@@ -374,7 +383,7 @@ static void TextInput_GX(Menu *_) {
     connect_code_buf_converted[connect_code_buf_converted_len++] = 0;
     
     Rect r = { -10, 10, 10, 15 };
-    HUD_DrawText(connect_code_buf_converted, &r, 0.5f, menu_colour_default_text, false);
+    HUD_DrawText(connect_code_buf_converted, &r, 1.0f, menu_colour_default_text, false);
 }
 
 static void TM_GX(GOBJ *gobj, int pass) {
@@ -393,8 +402,9 @@ static void TM_GX(GOBJ *gobj, int pass) {
 // THINK ----------------------------------------------------------------------------------------
 
 static void TextInput_Think(Menu *menu) {
-    HSD_Pad *pad = PadGetMaster(1); // TODO: ply
-    char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
+    HSD_Pad *pad = PadGetMaster(0); // TODO: ply
+    bool alt = pad->held & PAD_BUTTON_Y;
+    char lstick_char = alt ? TextInput_LStickChar_Alt(pad->stickX, pad->stickY) : TextInput_LStickChar(pad->stickX, pad->stickY);
     char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
 
     // TODO: count light press (but don't double count lol)
