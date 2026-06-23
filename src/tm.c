@@ -11,7 +11,15 @@ static PlayerSelectionsTransferBuffer *pstb;
 static FindMatchTransferBuffer *fmtb;
 static u8 *byteb;
 
+enum {
+    MENU_ID_NULL,
+    MENU_ID_TEST_MENU,
+    MENU_ID_CONNECT_CODE_INPUT,
+};
+static u32 cur_menu_id = MENU_ID_TEST_MENU;
+static u32 next_menu_id = MENU_ID_NULL;
 static bool paused = false;
+
 static u32 queue_timer = 0;
 
 enum {
@@ -19,6 +27,11 @@ enum {
     EXIT_SLIPPI,
 };
 static u8 exit_mode;
+
+// SOUND ----------------------------------------------------------------
+
+static void SFX_MenuScroll(void) { SFX_PlayRaw(287, 100, 128, 2, 0); }
+static void SFX_MenuOpen(void) { SFX_PlayCommon(5); }
 
 // ANIMATIONS ----------------------------------------------------------------
 
@@ -67,8 +80,8 @@ static void Click_QueueParty(MenuItem *item);
 
 static void Menu_Think(Menu *menu);
 static void Menu_GX(Menu *menu);
-static void TextInput_Think(Menu *menu);
-static void TextInput_GX(Menu *menu);
+static void Menu_Think_ConnectCodeInput(void);
+static void Menu_GX_ConnectCodeInput(void);
 
 // MENUS ----------------------------------------------------------------
 
@@ -108,27 +121,26 @@ static MenuItem test_menu_items[] = {
     },
 };
 static Menu test_menu = {
+    .menu_id = MENU_ID_TEST_MENU,
     .item_count = countof(test_menu_items),
     .items = test_menu_items,
-    .Think = Menu_Think,
-    .GX = Menu_GX,
     .selected_idx_cur = TEST_MENU_QUEUE_UNRANKED,
     .selected_idx_prev = TEST_MENU_QUEUE_UNRANKED,
 };
 
+static s32 connect_code_input_cursor = 0;
+static const char connect_code_input_grid[4*10] =
+    "ABCDEFGHIJ"
+    "KLMNOPQRST"
+    "UVWXYZ   #"
+    "0123456789"
+;
+
 // todo can I remove most of this?
+static Text *connect_code_text;
 static char connect_code_buf[18];
 static u32 connect_code_buf_len;
-static MenuItem *connect_code_text_input_menu_item;
-static u8 connect_code_text_input_online_mode;
-
-static Menu connect_code_text_input_menu = {
-    .Think = TextInput_Think,
-    .GX = TextInput_GX,
-};
-
-static Menu *menu_stack[32] = { &test_menu };
-static int menu_depth;
+static u8 connect_code_input_online_mode;
 
 // MENU CALLBACKS ----------------------------------------------------------------
 
@@ -156,7 +168,14 @@ static void Queue_Stop(void) {
     }
 }
 
-static void Click_Queue(MenuItem *item, u8 online_mode) {
+static MenuItem *GetOnlineModeMenuItem(u8 online_mode) {
+    static const u8 menu_id[] = { TEST_MENU_QUEUE_RANKED, TEST_MENU_QUEUE_UNRANKED, TEST_MENU_QUEUE_DIRECT, TEST_MENU_QUEUE_TEAMS, TEST_MENU_QUEUE_PARTY };
+    return &test_menu_items[menu_id[online_mode]];
+}
+
+static void Click_Queue(u8 online_mode) {
+    MenuItem *item = GetOnlineModeMenuItem(online_mode);
+
     if (!item->state) {
         Queue_Stop();
         MenuItem_On(item);
@@ -175,23 +194,24 @@ static void Click_Queue(MenuItem *item, u8 online_mode) {
     }
 }
 
-static void Click_QueueConnectCode(MenuItem *item, u8 online_mode) {
+static void Click_QueueConnectCode(u8 online_mode) {
+    MenuItem *item = GetOnlineModeMenuItem(online_mode);
+
     if (!item->state) {
         Queue_Stop();
-        menu_stack[++menu_depth] = &connect_code_text_input_menu; // potential sync issues with midframe menu change?
-        connect_code_text_input_menu_item = item;
-        connect_code_text_input_online_mode = online_mode;
+        next_menu_id = MENU_ID_CONNECT_CODE_INPUT;
+        connect_code_input_online_mode = online_mode;
     } else {
         Queue_Stop();
         MenuItem_Off(item);
     }
 }
 
-static void Click_QueueRanked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_RANKED); }
-static void Click_QueueUnranked(MenuItem *item) { Click_Queue(item, ONLINE_MODE_UNRANKED); }
-static void Click_QueueDirect(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_DIRECT); }
-static void Click_QueueTeams(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_TEAMS); }
-static void Click_QueueParty(MenuItem *item) { Click_QueueConnectCode(item, ONLINE_MODE_PARTY); }
+static void Click_QueueRanked(MenuItem *item) { Click_Queue(ONLINE_MODE_RANKED); }
+static void Click_QueueUnranked(MenuItem *item) { Click_Queue(ONLINE_MODE_UNRANKED); }
+static void Click_QueueDirect(MenuItem *item) { Click_QueueConnectCode(ONLINE_MODE_DIRECT); }
+static void Click_QueueTeams(MenuItem *item) { Click_QueueConnectCode(ONLINE_MODE_TEAMS); }
+static void Click_QueueParty(MenuItem *item) { Click_QueueConnectCode(ONLINE_MODE_PARTY); }
 
 // GX ----------------------------------------------------------------
 
@@ -269,6 +289,8 @@ static void Queue_GX(void) {
 }
 
 static void Menu_GX(Menu *menu) {
+    if (cur_menu_id != MENU_ID_TEST_MENU) return;
+
     f32 menu_x = 10;
     f32 menu_y = menu_pop.cur;
     s32 i = menu->item_count - 1;
@@ -320,78 +342,68 @@ static void Menu_GX(Menu *menu) {
     }
 }
 
-static void TextInput_DrawSide(f32 x, f32 y, char chars[15], char selected_char) {
+static void Menu_GX_ConnectCodeInput(void) {
     GXColor outline = {255, 255, 255, 255};
     GXColor outline_selected = {255, 100, 100, 255};
     GXColor inside = {0, 0, 0, 255};
 
+    static const f32 init_x = -20;
+    static const f32 init_y = 16;
     static const f32 square_size = 3;
     static const f32 square_pad = 0.2f;
 
-    for (int y_i = 0; y_i < 3; ++y_i) {
-        for (int x_i = 0; x_i < 5; ++x_i) {
-            Rect r = { x, y, x + square_size, y + square_size };
-            char c = chars[y_i*5 + x_i];
+    if (connect_code_text == NULL) {
+        Text *text = Text_CreateText(2, hud_canvas);
+        connect_code_text = text;
 
-            GXColor o = c == selected_char ? outline_selected : outline;
+        text->kerning = false;
+        text->align = false;
+        text->viewport_scale.X = 0.1f;
+        text->viewport_scale.Y = 0.1f;
+        text->hidden = false;
+        text->spacing.X = (square_size+square_pad)*10.f;
+
+        static char *rows[4] = {
+            "ABCDEFGHIJ",
+            "KLMNOPQRST",
+            "UVWXYZ\x81\x40\x81\x40\x81\x40\x81\x94", // pad with fullwidth space (x8140) until # (x8194)
+            "0123456789",
+        };
+        
+        f32 y = init_y*-10.f - 39.f;
+        f32 x = init_x*10.f + 6.f;
+        for (int i = 0; i < 4; ++i) {
+            Text_AddSubtext(text, x, y, rows[i]);
+            Text_SetScale(text, i, 0.5f, 0.5f);
+            y += (square_size + square_pad)*10.f;
+        }
+    }
+
+    bool hidden = cur_menu_id != MENU_ID_CONNECT_CODE_INPUT;
+    connect_code_text->hidden = hidden;
+    if (hidden) return;
+
+    f32 y = init_y;
+    for (s32 y_i = 0; y_i < 4; ++y_i) {
+        f32 x = init_x;
+        for (s32 x_i = 0; x_i < 10; ++x_i) {
+            bool selected = y_i*10 + x_i == connect_code_input_cursor;
+
+            Rect r = { x, y, x+square_size, y+square_size};
+            GXColor o = selected ? outline_selected : outline;
             HUD_DrawMenuItem(&r, o, inside);
-            
-            char text[4] = { 0 };
-            if (c != '#') {
-                text[0] = c;
-            } else {
-                // idk why the halfwidth hashtag doesn't work
-                text[0] = 0x81;
-                text[1] = 0x94;
-            }
-            HUD_DrawText(text, &r, 0.5f, o, true);
             x += square_size + square_pad;
         }
-
         y -= square_size + square_pad;
-        x -= (square_size + square_pad) * 5.f;
     }
-}
-
-static void TextInput_GX(Menu *_) {
-    HSD_Pad *pad = PadGetMaster(0); // TODO: ply
-    bool alt = pad->held & PAD_BUTTON_Y;
-
-    if (alt) {
-        char lstick_char = TextInput_LStickChar_Alt(pad->stickX, pad->stickY);
-        TextInput_DrawSide(-20, 8, text_input_chars_l_alt, lstick_char);
-    } else {
-        char lstick_char = TextInput_LStickChar(pad->stickX, pad->stickY);
-        TextInput_DrawSide(-20, 8, text_input_chars_l, lstick_char);
-    }
-
-    char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
-    TextInput_DrawSide(-2, 8, text_input_chars_r, cstick_char);
-
-    // stupid shift jis not having halfwidth # for some reason
-    char connect_code_buf_converted[countof(connect_code_buf)*2];
-    u32 connect_code_buf_converted_len = 0;
-    for (u32 i = 0; i < connect_code_buf_len; ++i) {
-        char c = connect_code_buf[i];
-        if (c != '#') {
-            connect_code_buf_converted[connect_code_buf_converted_len++] = c;
-        } else {
-            connect_code_buf_converted[connect_code_buf_converted_len++] = 0x81;
-            connect_code_buf_converted[connect_code_buf_converted_len++] = 0x94;
-        }
-    } 
-    connect_code_buf_converted[connect_code_buf_converted_len++] = 0;
-    
-    Rect r = { -10, 10, 10, 15 };
-    HUD_DrawText(connect_code_buf_converted, &r, 1.0f, menu_colour_default_text, false);
 }
 
 static void TM_GX(GOBJ *gobj, int pass) {
     if (pass == 1) {
         HUD_StartGX();
         
-        Menu *menu = menu_stack[menu_depth];
-        menu->GX(menu);
+        Menu_GX(&test_menu);
+        Menu_GX_ConnectCodeInput();
 
         Queue_GX();
     
@@ -401,33 +413,69 @@ static void TM_GX(GOBJ *gobj, int pass) {
 
 // THINK ----------------------------------------------------------------------------------------
 
-static void TextInput_Think(Menu *menu) {
-    HSD_Pad *pad = PadGetMaster(0); // TODO: ply
-    bool alt = pad->held & PAD_BUTTON_Y;
-    char lstick_char = alt ? TextInput_LStickChar_Alt(pad->stickX, pad->stickY) : TextInput_LStickChar(pad->stickX, pad->stickY);
-    char cstick_char = TextInput_CStickChar(pad->substickX, pad->substickY);
+#define KEY_REPEAT_IS_FAST (0x1000000)
 
-    // TODO: count light press (but don't double count lol)
+static int Menu_KeyRepeat(int down, int held, int keymask) {
+    static int repeat_timer = 0;
+    static const int repeat_time_slow = 30;
+    static const int repeat_time_fast = 2;
+    static const int repeat_continue_time_slow = 24;
+    static const int repeat_continue_time_fast = 0;
 
-    if (connect_code_buf_len+1 < countof(connect_code_buf)) {
-        if (pad->down & PAD_TRIGGER_L) connect_code_buf[connect_code_buf_len++] = lstick_char;
-        else if (pad->down & PAD_TRIGGER_R) connect_code_buf[connect_code_buf_len++] = cstick_char;
+    if ((held & keymask) == 0)
+        repeat_timer = 0;
+    else
+        repeat_timer++;
+
+    bool fast = held & PAD_TRIGGER_R;
+    int repeat_time = fast ? repeat_time_fast : repeat_time_slow;
+    int repeat_continue_time = fast ? repeat_continue_time_fast : repeat_continue_time_slow;
+    // menu->scroll.speed = fast ? selection_change_fast_r_t : selection_change_r_t;
+    
+    int repeat;
+    if (repeat_timer >= repeat_time) {
+        repeat_timer = repeat_continue_time;
+        repeat = held;
+    } else {
+        repeat = down;
     }
 
-    if (connect_code_buf_len && (pad->down & PAD_TRIGGER_Z))
-        connect_code_buf[--connect_code_buf_len] = 0;
+    if (fast) repeat |= KEY_REPEAT_IS_FAST;
+    return repeat;
+}
+
+static void Menu_Think_ConnectCodeInput(void) {
+    if (cur_menu_id != MENU_ID_CONNECT_CODE_INPUT) return;
+
+    HSD_Pad *pad = PadGetMaster(0); // TODO: ply
     
+    int keys = Menu_KeyRepeat(pad->down, pad->held, PAD_BUTTON_DOWN | PAD_BUTTON_UP | PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT);
+    
+    s32 prev_cursor = connect_code_input_cursor;
+    if (keys & PAD_BUTTON_DOWN) connect_code_input_cursor += 10;
+    if (keys & PAD_BUTTON_UP) connect_code_input_cursor -= 10;
+    if (keys & PAD_BUTTON_LEFT) connect_code_input_cursor -= 1;
+    if (keys & PAD_BUTTON_RIGHT) connect_code_input_cursor += 1;
+    if (connect_code_input_cursor < 0) connect_code_input_cursor = 0;
+    if (connect_code_input_cursor >= 40) connect_code_input_cursor = 39;
+    if (prev_cursor != connect_code_input_cursor) SFX_MenuScroll();
+
+    if (connect_code_buf_len+1 < countof(connect_code_buf) && (pad->down & PAD_BUTTON_A))
+        connect_code_buf[connect_code_buf_len++] = connect_code_input_grid[connect_code_input_cursor];
+
     if (pad->down & PAD_BUTTON_START) {
         memcpy(fmtb->opp_connect_code, connect_code_buf, sizeof(connect_code_buf));
-        Click_Queue(connect_code_text_input_menu_item, connect_code_text_input_online_mode);
-        menu_depth--;
+        Click_Queue(connect_code_input_online_mode);
+        next_menu_id = MENU_ID_TEST_MENU;
     }
     else if (pad->down & PAD_BUTTON_B) {
-        menu_depth--;
+        next_menu_id = MENU_ID_TEST_MENU;
     }
 }
 
 static void Menu_Think(Menu *menu) {
+    if (cur_menu_id != menu->menu_id) return;
+
     int combined_pad_down = 0; 
     int combined_pad_held = 0; 
     for (int i = 0; i < 4; ++i) {
@@ -447,53 +495,30 @@ static void Menu_Think(Menu *menu) {
             paused = true;
             Match_HideHUD();
             Match_FreezeGame(1);
-            SFX_PlayCommon(5);
+            SFX_MenuOpen();
             Anim_Start(&menu_pop);
             Anim_Start(&menu_pop_scroll);
         }
     }
-    
+
     if (paused) {
+        int keys = Menu_KeyRepeat(combined_pad_down, combined_pad_held, PAD_BUTTON_DOWN | PAD_BUTTON_UP);
+        menu->scroll.speed = (keys & KEY_REPEAT_IS_FAST) ? selection_change_fast_r_t : selection_change_r_t;
+
         bool selection_changed = false;
-    
-        static int repeat_timer = 0;
-        static const int repeat_time_slow = 30;
-        static const int repeat_time_fast = 2;
-        static const int repeat_continue_time_slow = 24;
-        static const int repeat_continue_time_fast = 0;
-    
-        if ((combined_pad_held & (PAD_BUTTON_UP | PAD_BUTTON_DOWN)) == 0)
-            repeat_timer = 0;
-        else
-            repeat_timer++;
-        
-        bool fast = combined_pad_held & PAD_TRIGGER_R;
-        int repeat_time = fast ? repeat_time_fast : repeat_time_slow;
-        int repeat_continue_time = fast ? repeat_continue_time_fast : repeat_continue_time_slow;
-        menu->scroll.speed = fast ? selection_change_fast_r_t : selection_change_r_t;
-    
-        bool repeat_input = false;
-        if (repeat_timer >= repeat_time) {
-            repeat_timer = repeat_continue_time;
-            repeat_input = true;
-        }
-    
-        int pad_scroll = repeat_input ? combined_pad_held : combined_pad_down;
-    
-        if ((pad_scroll & PAD_BUTTON_UP) && menu->selected_idx_cur > 0) {
+        if ((keys & PAD_BUTTON_UP) && menu->selected_idx_cur > 0) {
             selection_changed = true;
             menu->scroll.target -= 1.f;
             menu->selected_idx_prev = menu->selected_idx_cur;
             menu->selected_idx_cur -= 1;
         }
-    
-        if ((pad_scroll & PAD_BUTTON_DOWN) && menu->selected_idx_cur+1 < test_menu.item_count) {
+        if ((keys & PAD_BUTTON_DOWN) && menu->selected_idx_cur+1 < test_menu.item_count) {
             selection_changed = true;
             menu->scroll.target += 1.f;
             menu->selected_idx_prev = menu->selected_idx_cur;
             menu->selected_idx_cur += 1;
         }
-    
+
         // static u32 sfx_i= 0;
         // static int sfx[] = {
         //     183,287,490
@@ -507,8 +532,7 @@ static void Menu_Think(Menu *menu) {
         }*/
     
         if (selection_changed) {
-            SFX_PlayRaw(287, 100, 128, 2, 0);
-            // SFX_Play(sfx[sfx_i]);
+            SFX_MenuScroll();
             menu_selected_item_prev = menu_selected_item_cur;
             Anim_StartRev(&menu_selected_item_prev);
     
@@ -528,8 +552,13 @@ static void Menu_Think(Menu *menu) {
 }
 
 static void TM_Think(GOBJ *_) {
-    Menu *menu = menu_stack[menu_depth];
-    menu->Think(menu);
+    if (next_menu_id != MENU_ID_NULL) {
+        cur_menu_id = next_menu_id;
+        next_menu_id = MENU_ID_NULL;
+    }
+
+    Menu_Think(&test_menu);
+    Menu_Think_ConnectCodeInput();
 
     // QUEUE ------------------------------------------------------------------------
     
